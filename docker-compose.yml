@@ -1,0 +1,108 @@
+version: "3"
+
+
+networks:
+  dev:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+
+
+services:
+  maindb:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app
+    volumes:
+      - ./data/pg_data:/var/lib/postgresql/data/
+    networks:
+      - dev
+
+  redis:
+    image: redis:alpine
+    networks:
+      - dev
+
+  minio:
+    image: minio/minio
+    volumes:
+      - ./data/mini_data:/export
+    ports:
+      - "9002:9000"
+    environment:
+      MINIO_ACCESS_KEY: s3_key
+      MINIO_SECRET_KEY: s3_secret
+    command: server /export
+    networks:
+      - dev
+
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    env_file:
+      - config_defaults.env
+      - config.env
+    volumes:
+      - ./backend:/app
+      - ./data/static:/static
+    depends_on:
+      - maindb
+      - redis
+      - minio
+    networks:
+      - dev
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    env_file:
+      - config_defaults.env
+      - config.env
+    volumes:
+      - ./frontend:/app
+      - ./app/node_modules
+    networks:
+      - dev
+
+  nginx:
+    image: nginx
+    env_file:
+      - config_defaults.env
+      - config.env
+    environment:
+      - "NGINX_LISTEN=80 default"
+      - "NGINX_LISTEN_REDIRECT=88"
+      - "SSL_CERT="
+      - "SSL_KEY="
+    volumes:
+      - "./nginx/conf:/etc/nginx/templates"
+      - "./frontend/out:/html"
+      - ./data/static:/static
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - notebook
+      - frontend
+    networks:
+      - dev
+
+  notebook:
+    env_file:
+      - config_defaults.env
+      - config.env
+    environment:
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    command: ./manage.py shell_plus --notebook
+    volumes:
+      - ./backend:/app
+      - ./notebooks:/notebooks
+    networks:
+      - dev
